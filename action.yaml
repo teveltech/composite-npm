@@ -1,0 +1,251 @@
+name: 'Composite NPM Packaging Action'
+description: 'A composite action for packaging Node.js applications with npm/pkg'
+
+inputs:
+  node-version:
+    description: 'Node.js version to use'
+    required: false
+    type: string
+    default: '18'
+  registry-url:
+    description: 'npm registry URL'
+    required: false
+    type: string
+    default: 'https://registry.npmjs.org'
+  package-dir:
+    description: 'Directory containing package.json'
+    required: false
+    type: string
+    default: '.'
+  package-command:
+    description: 'Command to package the application'
+    required: false
+    type: string
+    default: 'npm run package'
+  test-command:
+    description: 'Command to test the application'
+    required: false
+    type: string
+    default: 'npm test'
+  publish-command:
+    description: 'Command to publish the package'
+    required: false
+    type: string
+    default: 'npm publish'
+  token:
+    description: 'NPM token for publishing'
+    required: true
+    type: string
+  tag:
+    description: 'NPM tag to use when publishing'
+    required: false
+    type: string
+    default: 'latest'
+  new-tag:
+    description: 'Version to set in package.json'
+    required: false
+    type: string
+  scope:
+    description: 'NPM scope (without @)'
+    required: false
+    type: string
+  access:
+    description: 'Access level (public or restricted)'
+    required: false
+    type: string
+    default: 'public'
+  skip-tests:
+    description: 'Skip running tests'
+    required: false
+    type: bool
+    default: false
+  skip-publish:
+    description: 'Skip publishing to npm'
+    required: false
+    type: bool
+    default: false
+  pre-publish-script:
+    description: 'Script to run before publishing'
+    required: false
+    type: string
+  pkg-targets:
+    description: 'Comma-separated list of pkg targets (e.g., node18-linux-x64,node18-win-x64)'
+    required: false
+    type: string
+  pkg-output-dir:
+    description: 'Output directory for packaged binaries'
+    required: false
+    type: string
+    default: 'dist'
+  entry-point:
+    description: 'Entry point for pkg (defaults to package.json main)'
+    required: false
+    type: string
+
+runs:
+  using: "composite"
+  steps:
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ inputs.node-version }}
+        registry-url: ${{ inputs.registry-url }}
+        scope: ${{ inputs.scope && format('@{0}', inputs.scope) || '' }}
+
+    - name: Install dependencies
+      shell: bash
+      run: cd ${{ inputs.package-dir }} && npm ci
+      
+    - name: Set version
+      shell: bash
+      id: set-version
+      run: |
+        cd ${{ inputs.package-dir }}
+        
+        # Get current version from package.json
+        CURRENT_VERSION=$(node -p "require('./package.json').version")
+        echo "Current version: $CURRENT_VERSION"
+        
+        # Set version based on new-tag if provided
+        if [ -n "${{ inputs.new-tag }}" ]; then
+          echo "Setting version from new-tag input: ${{ inputs.new-tag }}"
+          npm version ${{ inputs.new-tag }} --no-git-tag-version
+          echo "version=${{ inputs.new-tag }}" >> $GITHUB_OUTPUT
+        else
+          # Use current version from package.json
+          echo "Using current version from package.json"
+          echo "version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
+        fi
+        
+        # Show the final version that will be used
+        FINAL_VERSION=$(node -p "require('./package.json').version")
+        echo "Final package version: $FINAL_VERSION"
+    
+    - name: Install pkg globally
+      shell: bash
+      run: npm install -g pkg
+    
+    - name: Run tests
+      if: inputs.skip-tests != true
+      shell: bash
+      run: cd ${{ inputs.package-dir }} && ${{ inputs.test-command }}
+      
+    - name: Run pre-publish script
+      if: inputs.pre-publish-script != ''
+      shell: bash
+      run: |
+        cd ${{ inputs.package-dir }}
+        
+        # Handle only specific safe pre-publish script patterns
+        PRE_PUBLISH="${{ inputs.pre-publish-script }}"
+        
+        if [[ "$PRE_PUBLISH" == npm* ]]; then
+          # Handle npm commands safely
+          $PRE_PUBLISH
+        elif [[ "$PRE_PUBLISH" == yarn* ]]; then
+          # Handle yarn commands safely
+          $PRE_PUBLISH
+        elif [[ "$PRE_PUBLISH" == node* ]]; then
+          # Handle node script execution safely
+          $PRE_PUBLISH
+        else
+          echo "Warning: Unsupported pre-publish script format. For security, only npm, yarn, and node commands are supported."
+          echo "Requested script: $PRE_PUBLISH"
+          echo "Skipping pre-publish script execution."
+        fi
+    
+    - name: Package application
+      shell: bash
+      id: package
+      run: |
+        cd ${{ inputs.package-dir }}
+        
+        # Check if we need to override pkg command with additional arguments
+        if [[ -n "${{ inputs.pkg-targets }}" || -n "${{ inputs.pkg-output-dir }}" ]]; then
+          echo "Using custom pkg command with provided targets/output settings..."
+          
+          # Use pkg directly with arguments instead of eval
+          if [ -n "${{ inputs.pkg-targets }}" ] && [ -n "${{ inputs.pkg-output-dir }}" ]; then
+            # Both targets and output directory specified
+            pkg . --targets ${{ inputs.pkg-targets }} --out-path ${{ inputs.pkg-output-dir }}
+            echo "binaries_dir=${{ inputs.pkg-output-dir }}" >> $GITHUB_OUTPUT
+          elif [ -n "${{ inputs.pkg-targets }}" ]; then
+            # Only targets specified
+            pkg . --targets ${{ inputs.pkg-targets }}
+            # Try to determine output directory
+            PKG_DIR=$(node -p "try { require('./package.json').pkg.outputPath || 'dist' } catch(e) { 'dist' }")
+            echo "binaries_dir=$PKG_DIR" >> $GITHUB_OUTPUT
+          elif [ -n "${{ inputs.pkg-output-dir }}" ]; then
+            # Only output directory specified
+            pkg . --out-path ${{ inputs.pkg-output-dir }}
+            echo "binaries_dir=${{ inputs.pkg-output-dir }}" >> $GITHUB_OUTPUT
+          fi
+        else
+          # Run the regular packaging command
+          # For safety, we'll check which standard command we're using
+          if [ "${{ inputs.package-command }}" = "npm run package" ]; then
+            npm run package
+          elif [ "${{ inputs.package-command }}" = "yarn package" ]; then
+            yarn package
+          elif [ "${{ inputs.package-command }}" = "pnpm package" ]; then
+            pnpm package
+          elif [ "${{ inputs.package-command }}" = "pkg ." ]; then
+            pkg .
+          else
+            # If it's not one of the standard commands, we'll default to npm run package
+            echo "Warning: Custom package command not recognized. Defaulting to 'npm run package'"
+            npm run package
+          fi
+          
+          # Try to determine the output directory
+          PKG_DIR=$(node -p "try { require('./package.json').pkg.outputPath || 'dist' } catch(e) { 'dist' }")
+          echo "binaries_dir=$PKG_DIR" >> $GITHUB_OUTPUT
+        fi
+        
+        # Check if pkg output directory exists
+        PKG_OUTPUT_DIR=$(cat $GITHUB_OUTPUT | grep -o 'binaries_dir=.*' | cut -d'=' -f2 || echo "dist")
+        if [ -d "$PKG_OUTPUT_DIR" ]; then
+          echo "Packaged binaries are in: $PKG_OUTPUT_DIR"
+          ls -la $PKG_OUTPUT_DIR
+        fi
+    
+    - name: Publish to npm
+      if: inputs.skip-publish != true
+      shell: bash
+      env:
+        NODE_AUTH_TOKEN: ${{ inputs.token }}
+      run: |
+        cd ${{ inputs.package-dir }}
+        
+        # Use npm publish directly with arguments instead of building a command string
+        if [ "${{ inputs.access }}" = "public" ]; then
+          npm publish --access public --tag ${{ inputs.tag }}
+        else
+          npm publish --access restricted --tag ${{ inputs.tag }}
+        fi
+    
+    - name: Output package info
+      shell: bash
+      id: package-info
+      run: |
+        cd ${{ inputs.package-dir }}
+        PACKAGE_NAME=$(node -p "require('./package.json').name")
+        PACKAGE_VERSION=$(node -p "require('./package.json').version")
+        
+        echo "Package $PACKAGE_NAME@$PACKAGE_VERSION processed successfully"
+        echo "name=$PACKAGE_NAME" >> $GITHUB_OUTPUT
+        echo "version=$PACKAGE_VERSION" >> $GITHUB_OUTPUT
+
+outputs:
+  version:
+    description: "The version of the published package"
+    value: ${{ steps.set-version.outputs.version }}
+  package-name:
+    description: "The name of the published package"
+    value: ${{ steps.package-info.outputs.name }}
+  package-full:
+    description: "The full name and version of the published package"
+    value: ${{ steps.package-info.outputs.name }}@${{ steps.package-info.outputs.version }}
+  binaries-dir:
+    description: "Directory containing the packaged binaries"
+    value: ${{ steps.package.outputs.binaries_dir }}
