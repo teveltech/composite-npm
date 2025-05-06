@@ -163,6 +163,7 @@ runs:
         # Check if we need to override pkg command with additional arguments
         if [[ -n "${{ inputs.pkg-targets }}" || -n "${{ inputs.pkg-output-dir }}" ]]; then
           echo "Using custom pkg command with provided targets/output settings..."
+          echo "targets ${{ inputs.pkg-targets }} output dir ${{ inputs.pkg-output-dir }}"
           
           # Use pkg directly with arguments instead of eval
           if [ -n "${{ inputs.pkg-targets }}" ] && [ -n "${{ inputs.pkg-output-dir }}" ]; then
