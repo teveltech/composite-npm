@@ -94,7 +94,7 @@ runs:
 
     - name: Install dependencies
       shell: bash
-      run: cd ${{ inputs.package-dir }} && npm ci
+      run: cd ${{ inputs.package-dir }} && npm build
       
     - name: Set version
       shell: bash
