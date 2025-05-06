@@ -159,7 +159,7 @@ runs:
       id: package
       run: |
         cd ${{ inputs.package-dir }}
-        
+        npm run build
         # Check if we need to override pkg command with additional arguments
         if [[ -n "${{ inputs.pkg-targets }}" || -n "${{ inputs.pkg-output-dir }}" ]]; then
           echo "Using custom pkg command with provided targets/output settings..."
