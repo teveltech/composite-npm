@@ -126,7 +126,7 @@ runs:
       run: npm install -g pkg
     
     - name: Run tests
-      if: (inputs.skip-tests != true)
+      if: ${{ inputs.skip-tests != 'true' }}
       shell: bash
       run: cd ${{ inputs.package-dir }} && echo "Supposed to run tests" #${{ inputs.test-command }}
       
@@ -211,7 +211,7 @@ runs:
         fi
     
     - name: Publish to npm
-      if: (inputs.skip-publish != true)
+      if: ${{ inputs.skip-publish != 'true' }}
       shell: bash
       env:
         NODE_AUTH_TOKEN: ${{ inputs.token }}
