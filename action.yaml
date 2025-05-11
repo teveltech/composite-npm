@@ -11,7 +11,7 @@ inputs:
     description: 'npm registry URL'
     required: false
     type: string
-    default: 'https://registry.npmjs.org'
+    default: 'https://npm.pkg.github.com'
   package-dir:
     description: 'Directory containing package.json'
     required: false
@@ -95,7 +95,7 @@ runs:
     - name: Install dependencies
       shell: bash
       env:
-        NODE_AUTH_TOKEN: $GITHUB_TOKEN
+        NODE_AUTH_TOKEN: ${{secrets.GITHUB_TOKEN}} # add to inputs
       run: cd ${{ inputs.package-dir }} && npm ci
       
     - name: Set version
