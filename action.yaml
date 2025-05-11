@@ -95,7 +95,7 @@ runs:
     - name: Install dependencies
       shell: bash
       env:
-        NODE_AUTH_TOKEN: ${{secrets.GITHUB_TOKEN}} # add to inputs
+        NODE_AUTH_TOKEN: ${{ inputs.token }}
       run: cd ${{ inputs.package-dir }} && npm ci
       
     - name: Set version
