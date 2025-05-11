@@ -1,4 +1,4 @@
-/name: 'Composite NPM Packaging Action'
+name: 'Composite NPM Packaging Action'
 description: 'A composite action for packaging Node.js applications with npm/pkg'
 
 inputs:
@@ -94,6 +94,8 @@ runs:
 
     - name: Install dependencies
       shell: bash
+      env:
+        NODE_AUTH_TOKEN: $GITHUB_TOKEN
       run: cd ${{ inputs.package-dir }} && npm ci
       
     - name: Set version
