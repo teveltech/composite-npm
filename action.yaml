@@ -218,14 +218,29 @@ runs:
       env:
         NODE_AUTH_TOKEN: ${{ inputs.token }}
       run: |
+        set -euo pipefail
         cd ${{ inputs.package-dir }}
-        
-        # Use npm publish directly with arguments instead of building a command string
-        # if [ "${{ inputs.access }}" = "public" ]; then
-        #   npm publish --access public --tag ${{ inputs.tag }}
-        # else
-        #   npm publish --access restricted --tag ${{ inputs.tag }}
-        # fi
+
+        publish_cmd=(npm publish)
+
+        access="${{ inputs.access }}"
+        tag="${{ inputs.tag }}"
+        registry="${{ inputs.registry-url }}"
+
+        if [[ -n "${registry// }" ]]; then
+          publish_cmd+=(--registry "${registry}")
+        fi
+
+        if [[ -n "${access// }" ]]; then
+          publish_cmd+=(--access "${access}")
+        fi
+
+        if [[ -n "${tag// }" ]]; then
+          publish_cmd+=(--tag "${tag}")
+        fi
+
+        echo "Publishing package with: ${publish_cmd[*]}"
+        "${publish_cmd[@]}"
     
     - name: Output package info
       shell: bash
