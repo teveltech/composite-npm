@@ -6,7 +6,7 @@ inputs:
     description: 'Node.js version to use'
     required: false
     type: string
-    default: '18'
+    default: '20'
   registry-url:
     description: 'npm registry URL'
     required: false
