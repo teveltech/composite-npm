@@ -86,6 +86,10 @@ inputs:
     description: 'Entry point for pkg (defaults to package.json main)'
     required: false
     type: string
+  registry-auth-prefix:
+    description: 'Override auth host/path for npmrc (e.g., jfrog.local:8081/artifactory/api/npm/tevel-npm/)'
+    required: false
+    type: string
 
 runs:
   using: "composite"
@@ -96,6 +100,41 @@ runs:
         node-version: ${{ inputs.node-version }}
         registry-url: ${{ inputs.registry-url }}
         scope: ${{ inputs.scope && format('@{0}', inputs.scope) || '' }}
+
+    - name: Configure npm auth
+      shell: bash
+      env:
+        NPM_TOKEN: ${{ inputs.token }}
+        NPM_REGISTRY: ${{ inputs.registry-url }}
+        NPM_AUTH_PREFIX: ${{ inputs.registry-auth-prefix }}
+        NPM_SCOPE: ${{ inputs.scope && format('@{0}', inputs.scope) || '' }}
+      run: |
+        set -euo pipefail
+        if [ -z "${NPM_REGISTRY// }" ]; then
+          echo "No registry provided; skipping npmrc setup"
+          exit 0
+        fi
+
+        # Ensure a trailing slash for npmrc host entry
+        registry="${NPM_REGISTRY%/}/"
+        # Strip protocol for the //host/path:_authToken line (allow override)
+        if [ -n "${NPM_AUTH_PREFIX// }" ]; then
+          auth_host_path="${NPM_AUTH_PREFIX%/}/"
+        else
+          auth_host_path=$(echo "$registry" | sed -e 's#^https\?://##')
+        fi
+
+        {
+          echo "registry=${registry}"
+          if [ -n "${NPM_SCOPE// }" ]; then
+            echo "${NPM_SCOPE}:registry=${registry}"
+          fi
+
+          echo "//${auth_host_path}:_authToken=${NPM_TOKEN}"
+          echo "//${auth_host_path}:always-auth=true"
+        } > ~/.npmrc
+
+        echo "Configured npm auth for ${registry}"
 
     - name: Install dependencies
       shell: bash
@@ -234,6 +273,7 @@ runs:
         cd ${{ inputs.package-dir }}
 
         publish_cmd=(npm publish)
+        package_name=$(node -p "require('./package.json').name")
 
         access="${{ inputs.access }}"
         tag="${{ inputs.tag }}"
@@ -244,7 +284,11 @@ runs:
         fi
 
         if [[ -n "${access// }" ]]; then
-          publish_cmd+=(--access "${access}")
+          if [[ "$package_name" == @*/* ]]; then
+            publish_cmd+=(--access "${access}")
+          else
+            echo "Package '$package_name' is unscoped; skipping --access flag to stay compatible with registries like JFrog."
+          fi
         fi
 
         if [[ -n "${tag// }" ]]; then
