@@ -64,6 +64,11 @@ inputs:
     required: false
     type: bool
     default: false
+  skip-pkg:
+    description: 'Skip pkg executable packaging (for library packages)'
+    required: false
+    type: bool
+    default: false
   pre-publish-script:
     description: 'Script to run before publishing'
     required: false
@@ -126,6 +131,7 @@ runs:
         echo "Final package version: $FINAL_VERSION"
     
     - name: Install pkg globally
+      if: ${{ inputs.skip-pkg != 'true' }}
       shell: bash
       run: npm install -g pkg
     
@@ -158,12 +164,18 @@ runs:
           echo "Skipping pre-publish script execution."
         fi
     
-    - name: Package application
+    - name: Build package
+      shell: bash
+      run: |
+        cd ${{ inputs.package-dir }}
+        npm run build
+    
+    - name: Package application with pkg
+      if: ${{ inputs.skip-pkg != 'true' }}
       shell: bash
       id: package
       run: |
         cd ${{ inputs.package-dir }}
-        npm run build
         # Check if we need to override pkg command with additional arguments
         if [[ -n "${{ inputs.pkg-targets }}" || -n "${{ inputs.pkg-output-dir }}" ]]; then
           echo "Using custom pkg command with provided targets/output settings..."
