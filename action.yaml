@@ -89,7 +89,9 @@ runs:
       uses: actions/setup-node@v4
       with:
         node-version: ${{ inputs.node-version }}
-        registry-url: ${{ inputs.registry-url }}
+        # Only set registry-url if scope is provided (scoped packages)
+        # Otherwise, use default npm registry for all packages
+        registry-url: ${{ inputs.scope && inputs.registry-url || '' }}
         scope: ${{ inputs.scope && format('@{0}', inputs.scope) || '' }}
 
     - name: Install dependencies
