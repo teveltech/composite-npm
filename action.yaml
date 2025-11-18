@@ -90,6 +90,11 @@ inputs:
     description: 'Override auth host/path for npmrc (e.g., jfrog.local:8081/artifactory/api/npm/tevel-npm/)'
     required: false
     type: string
+  skip-if-exists:
+    description: 'Skip publish if version already exists in the registry'
+    required: false
+    type: bool
+    default: false
 
 runs:
   using: "composite"
@@ -154,9 +159,18 @@ runs:
         
         # Set version based on new-tag if provided
         if [ -n "${{ inputs.new-tag }}" ]; then
-          echo "Setting version from new-tag input: ${{ inputs.new-tag }}"
-          npm version ${{ inputs.new-tag }} --no-git-tag-version
-          echo "version=${{ inputs.new-tag }}" >> $GITHUB_OUTPUT
+          REQUESTED_VERSION=${{ inputs.new-tag }}
+          # Trim a leading 'v' to align with npm version expectations
+          REQUESTED_VERSION="${REQUESTED_VERSION#v}"
+
+          if [ "$REQUESTED_VERSION" = "$CURRENT_VERSION" ]; then
+            echo "Requested version matches current version; skipping npm version bump."
+          else
+            echo "Setting version from new-tag input: $REQUESTED_VERSION"
+            npm version "$REQUESTED_VERSION" --no-git-tag-version
+          fi
+
+          echo "version=$REQUESTED_VERSION" >> $GITHUB_OUTPUT
         else
           # Use current version from package.json
           echo "Using current version from package.json"
@@ -274,6 +288,7 @@ runs:
 
         publish_cmd=(npm publish)
         package_name=$(node -p "require('./package.json').name")
+        package_version=$(node -p "require('./package.json').version")
 
         access="${{ inputs.access }}"
         tag="${{ inputs.tag }}"
@@ -293,6 +308,15 @@ runs:
 
         if [[ -n "${tag// }" ]]; then
           publish_cmd+=(--tag "${tag}")
+        fi
+
+        if [[ "${{ inputs.skip-if-exists }}" == "true" ]]; then
+          echo "Checking if ${package_name}@${package_version} already exists in registry..."
+          existing_version=$(npm view "${package_name}@${package_version}" version ${registry:+--registry "$registry"} 2>/dev/null || true)
+          if [[ -n "${existing_version// }" ]]; then
+            echo "Version ${package_name}@${package_version} already exists. Skipping publish."
+            exit 0
+          fi
         fi
 
         echo "Publishing package with: ${publish_cmd[*]}"
