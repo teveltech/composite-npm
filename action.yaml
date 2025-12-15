@@ -6,7 +6,7 @@ inputs:
     description: 'Node.js version to use'
     required: false
     type: string
-    default: '18'
+    default: '20'
   registry-url:
     description: 'npm registry URL'
     required: false
@@ -64,6 +64,11 @@ inputs:
     required: false
     type: bool
     default: false
+  skip-pkg:
+    description: 'Skip pkg executable packaging (for library packages)'
+    required: false
+    type: bool
+    default: false
   pre-publish-script:
     description: 'Script to run before publishing'
     required: false
@@ -81,6 +86,15 @@ inputs:
     description: 'Entry point for pkg (defaults to package.json main)'
     required: false
     type: string
+  registry-auth-prefix:
+    description: 'Override auth host/path for npmrc (e.g., jfrog.local:8081/artifactory/api/npm/tevel-npm/)'
+    required: false
+    type: string
+  skip-if-exists:
+    description: 'Skip publish if version already exists in the registry'
+    required: false
+    type: bool
+    default: false
 
 runs:
   using: "composite"
@@ -91,6 +105,41 @@ runs:
         node-version: ${{ inputs.node-version }}
         registry-url: ${{ inputs.registry-url }}
         scope: ${{ inputs.scope && format('@{0}', inputs.scope) || '' }}
+
+    - name: Configure npm auth
+      shell: bash
+      env:
+        NPM_TOKEN: ${{ inputs.token }}
+        NPM_REGISTRY: ${{ inputs.registry-url }}
+        NPM_AUTH_PREFIX: ${{ inputs.registry-auth-prefix }}
+        NPM_SCOPE: ${{ inputs.scope && format('@{0}', inputs.scope) || '' }}
+      run: |
+        set -euo pipefail
+        if [ -z "${NPM_REGISTRY// }" ]; then
+          echo "No registry provided; skipping npmrc setup"
+          exit 0
+        fi
+
+        # Ensure a trailing slash for npmrc host entry
+        registry="${NPM_REGISTRY%/}/"
+        # Strip protocol for the //host/path:_authToken line (allow override)
+        if [ -n "${NPM_AUTH_PREFIX// }" ]; then
+          auth_host_path="${NPM_AUTH_PREFIX%/}/"
+        else
+          auth_host_path=$(echo "$registry" | sed -e 's#^https\?://##')
+        fi
+
+        {
+          echo "registry=${registry}"
+          if [ -n "${NPM_SCOPE// }" ]; then
+            echo "${NPM_SCOPE}:registry=${registry}"
+          fi
+
+          echo "//${auth_host_path}:_authToken=${NPM_TOKEN}"
+          echo "//${auth_host_path}:always-auth=true"
+        } > ~/.npmrc
+
+        echo "Configured npm auth for ${registry}"
 
     - name: Install dependencies
       shell: bash
@@ -110,9 +159,18 @@ runs:
         
         # Set version based on new-tag if provided
         if [ -n "${{ inputs.new-tag }}" ]; then
-          echo "Setting version from new-tag input: ${{ inputs.new-tag }}"
-          npm version ${{ inputs.new-tag }} --no-git-tag-version
-          echo "version=${{ inputs.new-tag }}" >> $GITHUB_OUTPUT
+          REQUESTED_VERSION=${{ inputs.new-tag }}
+          # Trim a leading 'v' to align with npm version expectations
+          REQUESTED_VERSION="${REQUESTED_VERSION#v}"
+
+          if [ "$REQUESTED_VERSION" = "$CURRENT_VERSION" ]; then
+            echo "Requested version matches current version; skipping npm version bump."
+          else
+            echo "Setting version from new-tag input: $REQUESTED_VERSION"
+            npm version "$REQUESTED_VERSION" --no-git-tag-version
+          fi
+
+          echo "version=$REQUESTED_VERSION" >> $GITHUB_OUTPUT
         else
           # Use current version from package.json
           echo "Using current version from package.json"
@@ -124,6 +182,7 @@ runs:
         echo "Final package version: $FINAL_VERSION"
     
     - name: Install pkg globally
+      if: ${{ inputs.skip-pkg != 'true' }}
       shell: bash
       run: npm install -g pkg
     
@@ -156,12 +215,18 @@ runs:
           echo "Skipping pre-publish script execution."
         fi
     
-    - name: Package application
+    - name: Build package
+      shell: bash
+      run: |
+        cd ${{ inputs.package-dir }}
+        npm run build
+    
+    - name: Package application with pkg
+      if: ${{ inputs.skip-pkg != 'true' }}
       shell: bash
       id: package
       run: |
         cd ${{ inputs.package-dir }}
-        npm run build
         # Check if we need to override pkg command with additional arguments
         if [[ -n "${{ inputs.pkg-targets }}" || -n "${{ inputs.pkg-output-dir }}" ]]; then
           echo "Using custom pkg command with provided targets/output settings..."
@@ -218,14 +283,44 @@ runs:
       env:
         NODE_AUTH_TOKEN: ${{ inputs.token }}
       run: |
+        set -euo pipefail
         cd ${{ inputs.package-dir }}
-        
-        # Use npm publish directly with arguments instead of building a command string
-        # if [ "${{ inputs.access }}" = "public" ]; then
-        #   npm publish --access public --tag ${{ inputs.tag }}
-        # else
-        #   npm publish --access restricted --tag ${{ inputs.tag }}
-        # fi
+
+        publish_cmd=(npm publish)
+        package_name=$(node -p "require('./package.json').name")
+        package_version=$(node -p "require('./package.json').version")
+
+        access="${{ inputs.access }}"
+        tag="${{ inputs.tag }}"
+        registry="${{ inputs.registry-url }}"
+
+        if [[ -n "${registry// }" ]]; then
+          publish_cmd+=(--registry "${registry}")
+        fi
+
+        if [[ -n "${access// }" ]]; then
+          if [[ "$package_name" == @*/* ]]; then
+            publish_cmd+=(--access "${access}")
+          else
+            echo "Package '$package_name' is unscoped; skipping --access flag to stay compatible with registries like JFrog."
+          fi
+        fi
+
+        if [[ -n "${tag// }" ]]; then
+          publish_cmd+=(--tag "${tag}")
+        fi
+
+        if [[ "${{ inputs.skip-if-exists }}" == "true" ]]; then
+          echo "Checking if ${package_name}@${package_version} already exists in registry..."
+          existing_version=$(npm view "${package_name}@${package_version}" version ${registry:+--registry "$registry"} 2>/dev/null || true)
+          if [[ -n "${existing_version// }" ]]; then
+            echo "Version ${package_name}@${package_version} already exists. Skipping publish."
+            exit 0
+          fi
+        fi
+
+        echo "Publishing package with: ${publish_cmd[*]}"
+        "${publish_cmd[@]}"
     
     - name: Output package info
       shell: bash
